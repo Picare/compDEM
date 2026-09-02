@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Input DEM / georeferencing data
+*.tif
+*.tiff
+*.tfw
+
+# Generated outputs
+*_detections.geojson
+*_zones.geojson
+*_boxes.geojson
+*_summary.json
