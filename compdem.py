@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""compDEM 4.5.1 — comparaison robuste de deux DEM photogrammétriques."""
+"""compDEM 4.5.2 — comparaison robuste de deux DEM photogrammétriques."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from affine import Affine
 from rasterio.enums import ColorInterp
 from rasterio.windows import Window, from_bounds
 
-__version__ = "4.5.1"
+__version__ = "4.5.2"
 
 # Profil V4_GOLDEN validé. Les paramètres métier restent internes au code.
 PROFILE = {
@@ -389,8 +389,8 @@ def save_geojson(path: Path, features: list, crs, properties: dict):
     # gardant de vrais nombres JSON (et non des chaînes).
     text = json.dumps(data, ensure_ascii=False, indent=2)
     fixed_decimals = {
-        "bbox_width_m": 4,
-        "bbox_height_m": 4,
+        "bbox_width_m": 3,
+        "bbox_height_m": 3,
         "median_depth_mm": 1,
         "spatial_max_depth_mm": 1,
     }
@@ -566,8 +566,8 @@ def export_results(candidates, zones, final_boxes, diff, valid, transform, crs, 
         props = {
             "box_id": i,
             "zone_count": len(b["members"]), "threshold_mm": threshold_mm,
-            "bbox_width_m": round(ring[1][0] - ring[0][0], 4),
-            "bbox_height_m": round(ring[2][1] - ring[1][1], 4),
+            "bbox_width_m": round(ring[1][0] - ring[0][0], 3),
+            "bbox_height_m": round(ring[2][1] - ring[1][1], 3),
             **box_depth_stats(b, diff, transform),
         }
         box_features.append({"type": "Feature", "properties": props,
