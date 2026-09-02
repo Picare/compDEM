@@ -113,4 +113,4 @@ Le canal alpha est réel. Ce raster peut donc être tuilé en PNG transparent po
 
 ## Version
 
-`4.5.1` — même géométrie V4_GOLDEN ; dimensions de box exportées à 4 décimales en mètres et profondeurs signées à 1 décimale en millimètres.
+`4.5.2` — même géométrie V4_GOLDEN ; dimensions de box exportées à 3 décimales en mètres et profondeurs signées à 1 décimale en millimètres.
