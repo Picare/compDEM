@@ -1,0 +1,6 @@
+{
+  "reference_dem": "DEM_reference.tif",
+  "compare_dem": "DEM_compare.tif",
+  "threshold_mm": 10.0,
+  "output_prefix": "result"
+}
