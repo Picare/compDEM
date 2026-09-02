@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""compDEM 4.5.0 — comparaison robuste de deux DEM photogrammétriques."""
+"""compDEM 4.5.1 — comparaison robuste de deux DEM photogrammétriques."""
 
 from __future__ import annotations
 
 import argparse
 import json
 import math
+import re
 from pathlib import Path
 
 import cv2
@@ -16,7 +17,7 @@ from affine import Affine
 from rasterio.enums import ColorInterp
 from rasterio.windows import Window, from_bounds
 
-__version__ = "4.5.0"
+__version__ = "4.5.1"
 
 # Profil V4_GOLDEN validé. Les paramètres métier restent internes au code.
 PROFILE = {
@@ -383,7 +384,21 @@ def save_geojson(path: Path, features: list, crs, properties: dict):
     data = {"type": "FeatureCollection", "properties": properties, "features": features}
     if crs is not None:
         data["crs"] = {"type": "name", "properties": {"name": crs.to_wkt()}}
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # Conserver une présentation décimale stable dans le texte GeoJSON tout en
+    # gardant de vrais nombres JSON (et non des chaînes).
+    text = json.dumps(data, ensure_ascii=False, indent=2)
+    fixed_decimals = {
+        "bbox_width_m": 4,
+        "bbox_height_m": 4,
+        "median_depth_mm": 1,
+        "spatial_max_depth_mm": 1,
+    }
+    for key, decimals in fixed_decimals.items():
+        pattern = re.compile(rf'("{re.escape(key)}"\s*:\s*)(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)')
+        text = pattern.sub(lambda m, d=decimals: m.group(1) + f"{float(m.group(2)):.{d}f}", text)
+
+    path.write_text(text, encoding="utf-8")
 
 
 def write_tfw(tiff_path: Path, transform: Affine):
@@ -517,9 +532,10 @@ def box_depth_stats(box_item, diff, transform):
     )
     return {
         "detected_pixel_count": int(len(values)),
-        "median_depth_mm": round(median_depth_mm, 3),
-        "spatial_max_depth_mm": None if spatial_max is None else round(float(spatial_max), 3),
+        "median_depth_mm": round(median_depth_mm, 1),
+        "spatial_max_depth_mm": None if spatial_max is None else round(float(spatial_max), 1),
     }
+
 
 def export_results(candidates, zones, final_boxes, diff, valid, transform, crs, cfg):
     paths, threshold_mm = output_paths(cfg), cfg["threshold_mm"]
@@ -550,8 +566,8 @@ def export_results(candidates, zones, final_boxes, diff, valid, transform, crs, 
         props = {
             "box_id": i,
             "zone_count": len(b["members"]), "threshold_mm": threshold_mm,
-            "bbox_width_m": round(ring[1][0] - ring[0][0], 3),
-            "bbox_height_m": round(ring[2][1] - ring[1][1], 3),
+            "bbox_width_m": round(ring[1][0] - ring[0][0], 4),
+            "bbox_height_m": round(ring[2][1] - ring[1][1], 4),
             **box_depth_stats(b, diff, transform),
         }
         box_features.append({"type": "Feature", "properties": props,
