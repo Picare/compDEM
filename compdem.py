@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""compDEM 4.4.0 — comparaison robuste de deux DEM photogrammétriques."""
+"""compDEM 4.5.0 — comparaison robuste de deux DEM photogrammétriques."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from affine import Affine
 from rasterio.enums import ColorInterp
 from rasterio.windows import Window, from_bounds
 
-__version__ = "4.4.0"
+__version__ = "4.5.0"
 
 # Profil V4_GOLDEN validé. Les paramètres métier restent internes au code.
 PROFILE = {
@@ -495,9 +495,12 @@ def spatial_confirmed_max_depth_mm(xs, ys, values, transform, min_area_cm2=2.0):
             else:
                 hi = mid - 1
         if best is not None:
-            confirmed_depths.append(best * 1000.0)
+            # Conserver le signe du changement : positif = gain, négatif = perte.
+            confirmed_depths.append(sign * best * 1000.0)
 
-    return max(confirmed_depths) if confirmed_depths else None
+    # Si une box contient exceptionnellement les deux signes, conserver le
+    # maximum spatial confirmé ayant la plus grande amplitude absolue.
+    return max(confirmed_depths, key=abs) if confirmed_depths else None
 
 
 def box_depth_stats(box_item, diff, transform):
@@ -505,25 +508,22 @@ def box_depth_stats(box_item, diff, transform):
     xs, ys, values = detected_support_for_box(box_item, diff)
     if not len(values):
         return {"detected_pixel_count": 0, "median_depth_mm": None,
-                "median_dz_mm": None, "spatial_max_depth_mm": None}
+                "spatial_max_depth_mm": None}
 
-    # La médiane utilise TOUS les pixels détectés. Aucun filtrage P99 n'est appliqué.
-    median_depth_mm = float(np.median(np.abs(values)) * 1000.0)
-    median_dz_mm = float(np.median(values) * 1000.0)
+    # Médiane signée sur TOUS les pixels détectés. Aucun filtrage P99.
+    median_depth_mm = float(np.median(values) * 1000.0)
     spatial_max = spatial_confirmed_max_depth_mm(
         xs, ys, values, transform, min_area_cm2=PROFILE["spatial_max_min_area_cm2"]
     )
     return {
         "detected_pixel_count": int(len(values)),
         "median_depth_mm": round(median_depth_mm, 3),
-        "median_dz_mm": round(median_dz_mm, 3),
         "spatial_max_depth_mm": None if spatial_max is None else round(float(spatial_max), 3),
     }
 
-
 def export_results(candidates, zones, final_boxes, diff, valid, transform, crs, cfg):
     paths, threshold_mm = output_paths(cfg), cfg["threshold_mm"]
-    common = {"algorithm": "V4.4 spatially confirmed stats on V4_GOLDEN geometry",
+    common = {"algorithm": "V4.5 signed spatial stats on V4_GOLDEN geometry",
               "difference": "compare - reference", "threshold_mm": threshold_mm,
               "spatial_max_min_area_cm2": PROFILE["spatial_max_min_area_cm2"]}
 
@@ -548,10 +548,10 @@ def export_results(candidates, zones, final_boxes, diff, valid, transform, crs, 
     for i, b in enumerate(final_boxes, 1):
         ring = world_axis_aligned_ring(b["bbox_px"], transform)
         props = {
-            "box_id": i, "sign": sign_name(b["sign"]), "signs": [sign_name(s) for s in b.get("signs", [])],
+            "box_id": i,
             "zone_count": len(b["members"]), "threshold_mm": threshold_mm,
-            "bbox_width_cm": round((ring[1][0] - ring[0][0]) * 100.0, 2),
-            "bbox_height_cm": round((ring[2][1] - ring[1][1]) * 100.0, 2),
+            "bbox_width_m": round(ring[1][0] - ring[0][0], 3),
+            "bbox_height_m": round(ring[2][1] - ring[1][1], 3),
             **box_depth_stats(b, diff, transform),
         }
         box_features.append({"type": "Feature", "properties": props,
@@ -579,7 +579,7 @@ def export_results(candidates, zones, final_boxes, diff, valid, transform, crs, 
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Détection V4.4 de changements entre deux DEM")
+    parser = argparse.ArgumentParser(description="Détection V4.5 de changements entre deux DEM")
     parser.add_argument("config", help="Fichier JSON de configuration")
     args = parser.parse_args()
     cfg = load_config(args.config)
