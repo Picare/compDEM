@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""compDEM 4.3.0 — comparaison robuste de deux DEM photogrammétriques."""
+"""compDEM 4.4.0 — comparaison robuste de deux DEM photogrammétriques."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from affine import Affine
 from rasterio.enums import ColorInterp
 from rasterio.windows import Window, from_bounds
 
-__version__ = "4.3.0"
+__version__ = "4.4.0"
 
 # Profil V4_GOLDEN validé. Les paramètres métier restent internes au code.
 PROFILE = {
@@ -39,6 +39,7 @@ PROFILE = {
     "sign_neighborhood_cm": 5.0,
     "max_opposite_signal_ratio": 0.10,
     "merge_distance_cm": 4.0,
+    "spatial_max_min_area_cm2": 2.0,
 }
 
 
@@ -429,42 +430,102 @@ def iter_leaf_detections(item):
             yield from iter_leaf_detections(member)
 
 
-def detected_values_for_box(box_item, diff):
+def detected_support_for_box(box_item, diff):
+    """Renvoie les pixels détectés uniques d'une box : x, y et valeur dz."""
     width, ids = diff.shape[1], []
     for det in iter_leaf_detections(box_item):
         xs, ys = det.get("_support_xs"), det.get("_support_ys")
         if xs is not None and ys is not None and len(xs):
             ids.append(ys.astype(np.int64) * width + xs.astype(np.int64))
     if not ids:
-        return np.empty(0, dtype=np.float32)
+        empty_i = np.empty(0, dtype=np.int64)
+        return empty_i, empty_i, np.empty(0, dtype=np.float32)
     unique_ids = np.unique(np.concatenate(ids))
-    values = diff[unique_ids // width, unique_ids % width]
-    return values[np.isfinite(values)]
+    ys, xs = unique_ids // width, unique_ids % width
+    values = diff[ys, xs]
+    finite = np.isfinite(values)
+    return xs[finite], ys[finite], values[finite]
 
 
-def robust_box_stats(box_item, diff):
-    """P99 sur tous les pixels détectés; médianes sur les pixels <= P99."""
-    values = detected_values_for_box(box_item, diff)
+def spatial_confirmed_max_depth_mm(xs, ys, values, transform, min_area_cm2=2.0):
+    """Maximum |dz| confirmé par une composante 8-connexe d'au moins min_area_cm2.
+
+    Les pixels positifs et négatifs sont traités séparément : ils ne peuvent donc
+    jamais s'additionner artificiellement pour atteindre la surface minimale.
+    Une recherche binaire permet de trouver le seuil de profondeur maximal sans
+    tester toutes les valeurs une par une.
+    """
     if not len(values):
-        return {"detected_pixel_count": 0, "stats_pixel_count": 0,
-                "p99_depth_mm": None, "median_depth_mm": None, "median_dz_mm": None}
-    depths_mm = np.abs(values) * 1000.0
-    p99 = float(np.percentile(depths_mm, 99.0))
-    keep = depths_mm <= p99
-    filtered_values, filtered_depths = values[keep], depths_mm[keep]
+        return None
+
+    px_m = pixel_size_m(transform)
+    px_area_cm2 = px_m * px_m * 10000.0
+    min_pixels = max(1, int(math.ceil(min_area_cm2 / px_area_cm2)))
+    confirmed_depths = []
+
+    for sign in (1, -1):
+        select = values > 0 if sign > 0 else values < 0
+        if int(np.sum(select)) < min_pixels:
+            continue
+
+        sx, sy = xs[select], ys[select]
+        depths = np.abs(values[select]).astype(np.float32)
+        x0, x1 = int(sx.min()), int(sx.max()) + 1
+        y0, y1 = int(sy.min()), int(sy.max()) + 1
+        lx, ly = sx - x0, sy - y0
+        levels = np.unique(depths)
+
+        def has_confirmed_component(level):
+            active = depths >= level
+            if int(np.sum(active)) < min_pixels:
+                return False
+            mask = np.zeros((y1 - y0, x1 - x0), dtype=np.uint8)
+            mask[ly[active], lx[active]] = 1
+            n, _, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
+            return n > 1 and int(stats[1:, cv2.CC_STAT_AREA].max()) >= min_pixels
+
+        # Propriété monotone : quand le seuil descend, le nombre de pixels actifs
+        # ne peut qu'augmenter. On cherche donc le plus haut niveau encore confirmé.
+        lo, hi, best = 0, len(levels) - 1, None
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            if has_confirmed_component(levels[mid]):
+                best = float(levels[mid])
+                lo = mid + 1
+            else:
+                hi = mid - 1
+        if best is not None:
+            confirmed_depths.append(best * 1000.0)
+
+    return max(confirmed_depths) if confirmed_depths else None
+
+
+def box_depth_stats(box_item, diff, transform):
+    """Statistiques métier calculées uniquement sur les pixels réellement détectés."""
+    xs, ys, values = detected_support_for_box(box_item, diff)
+    if not len(values):
+        return {"detected_pixel_count": 0, "median_depth_mm": None,
+                "median_dz_mm": None, "spatial_max_depth_mm": None}
+
+    # La médiane utilise TOUS les pixels détectés. Aucun filtrage P99 n'est appliqué.
+    median_depth_mm = float(np.median(np.abs(values)) * 1000.0)
+    median_dz_mm = float(np.median(values) * 1000.0)
+    spatial_max = spatial_confirmed_max_depth_mm(
+        xs, ys, values, transform, min_area_cm2=PROFILE["spatial_max_min_area_cm2"]
+    )
     return {
         "detected_pixel_count": int(len(values)),
-        "stats_pixel_count": int(len(filtered_values)),
-        "p99_depth_mm": round(p99, 3),
-        "median_depth_mm": round(float(np.median(filtered_depths)), 3),
-        "median_dz_mm": round(float(np.median(filtered_values) * 1000.0), 3),
+        "median_depth_mm": round(median_depth_mm, 3),
+        "median_dz_mm": round(median_dz_mm, 3),
+        "spatial_max_depth_mm": None if spatial_max is None else round(float(spatial_max), 3),
     }
 
 
 def export_results(candidates, zones, final_boxes, diff, valid, transform, crs, cfg):
     paths, threshold_mm = output_paths(cfg), cfg["threshold_mm"]
-    common = {"algorithm": "V4.3 robust stats on V4_GOLDEN geometry",
-              "difference": "compare - reference", "threshold_mm": threshold_mm}
+    common = {"algorithm": "V4.4 spatially confirmed stats on V4_GOLDEN geometry",
+              "difference": "compare - reference", "threshold_mm": threshold_mm,
+              "spatial_max_min_area_cm2": PROFILE["spatial_max_min_area_cm2"]}
 
     detections = []
     for i, det in enumerate(candidates, 1):
@@ -491,7 +552,7 @@ def export_results(candidates, zones, final_boxes, diff, valid, transform, crs, 
             "zone_count": len(b["members"]), "threshold_mm": threshold_mm,
             "bbox_width_cm": round((ring[1][0] - ring[0][0]) * 100.0, 2),
             "bbox_height_cm": round((ring[2][1] - ring[1][1]) * 100.0, 2),
-            **robust_box_stats(b, diff),
+            **box_depth_stats(b, diff, transform),
         }
         box_features.append({"type": "Feature", "properties": props,
                              "geometry": {"type": "Polygon", "coordinates": [ring]}})
@@ -518,7 +579,7 @@ def export_results(candidates, zones, final_boxes, diff, valid, transform, crs, 
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Détection V4.3 de changements entre deux DEM")
+    parser = argparse.ArgumentParser(description="Détection V4.4 de changements entre deux DEM")
     parser.add_argument("config", help="Fichier JSON de configuration")
     args = parser.parse_args()
     cfg = load_config(args.config)
