@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""compDEM 4.5.2 — comparaison robuste de deux DEM photogrammétriques."""
+"""compDEM 4.5.3 — comparaison robuste de deux DEM photogrammétriques."""
 
 from __future__ import annotations
 
@@ -15,9 +15,11 @@ import numpy as np
 import rasterio
 from affine import Affine
 from rasterio.enums import ColorInterp
+from rasterio.shutil import copy as rio_copy
+import tempfile
 from rasterio.windows import Window, from_bounds
 
-__version__ = "4.5.2"
+__version__ = "4.5.3"
 
 # Profil V4_GOLDEN validé. Les paramètres métier restent internes au code.
 PROFILE = {
@@ -401,39 +403,100 @@ def save_geojson(path: Path, features: list, crs, properties: dict):
     path.write_text(text, encoding="utf-8")
 
 
-def write_tfw(tiff_path: Path, transform: Affine):
-    cx = transform.c + 0.5 * transform.a + 0.5 * transform.b
-    cy = transform.f + 0.5 * transform.d + 0.5 * transform.e
-    values = [transform.a, transform.d, transform.b, transform.e, cx, cy]
-    tiff_path.with_suffix(".tfw").write_text("\n".join(f"{v:.15f}" for v in values) + "\n", encoding="utf-8")
-
-
 def save_difference_tiff(path: Path, diff, transform, crs):
-    profile = {
-        "driver": "GTiff", "height": diff.shape[0], "width": diff.shape[1], "count": 1,
-        "dtype": "float32", "transform": transform, "crs": crs, "compress": "DEFLATE",
-        "predictor": 3, "tiled": True, "blockxsize": 256, "blockysize": 256, "nodata": np.nan,
-    }
-    with rasterio.open(path, "w", **profile) as dst:
-        dst.write(diff.astype(np.float32), 1)
-    write_tfw(path, transform)
+    """Écrit la différence en GeoTIFF COG float32.
+
+    On crée d'abord un GeoTIFF classique temporaire, puis on le convertit en
+    COG. Cette voie est simple et robuste avec Rasterio/GDAL.
+    """
+    with tempfile.TemporaryDirectory(prefix="compdem_diff_") as tmpdir:
+        tmp_path = Path(tmpdir) / "difference_tmp.tif"
+        profile = {
+            "driver": "GTiff",
+            "height": diff.shape[0],
+            "width": diff.shape[1],
+            "count": 1,
+            "dtype": "float32",
+            "transform": transform,
+            "crs": crs,
+            "tiled": True,
+            "blockxsize": 512,
+            "blockysize": 512,
+            "compress": "DEFLATE",
+            "predictor": 3,
+            "nodata": np.nan,
+        }
+        with rasterio.open(tmp_path, "w", **profile) as dst:
+            dst.write(diff.astype(np.float32), 1)
+
+        rio_copy(
+            tmp_path,
+            path,
+            driver="COG",
+            COMPRESS="DEFLATE",
+            PREDICTOR="FLOATING_POINT",
+            BLOCKSIZE=512,
+            OVERVIEWS="AUTO",
+            OVERVIEW_COMPRESS="DEFLATE",
+            OVERVIEW_RESAMPLING="NEAREST",
+            BIGTIFF="IF_SAFER",
+        )
 
 
 def save_rgba_tiff(path: Path, diff, valid, transform, crs, threshold_mm: float):
+    """Écrit une visualisation en GeoTIFF COG RGB + masque de transparence.
+
+    Le raster final est un COG 3 bandes compressé en JPEG 95, avec un masque
+    interne GDAL. C'est plus léger qu'un RGBA 4 bandes, tout en conservant la
+    transparence lors du tuilage vers des PNG web.
+    """
     threshold_m = threshold_mm / 1000.0
     positive = valid & np.isfinite(diff) & (diff > threshold_m)
     negative = valid & np.isfinite(diff) & (diff < -threshold_m)
-    rgba = np.zeros((4, *diff.shape), dtype=np.uint8)
-    rgba[0, positive], rgba[2, negative], rgba[3, positive | negative] = 255, 255, 255
-    profile = {
-        "driver": "GTiff", "height": diff.shape[0], "width": diff.shape[1], "count": 4,
-        "dtype": "uint8", "transform": transform, "crs": crs, "compress": "DEFLATE",
-        "tiled": True, "blockxsize": 256, "blockysize": 256, "photometric": "RGB",
-    }
-    with rasterio.open(path, "w", **profile) as dst:
-        dst.write(rgba)
-        dst.colorinterp = (ColorInterp.red, ColorInterp.green, ColorInterp.blue, ColorInterp.alpha)
-    write_tfw(path, transform)
+
+    rgb = np.zeros((3, *diff.shape), dtype=np.uint8)
+    rgb[0, positive] = 255   # Rouge vif
+    rgb[2, negative] = 255   # Bleu vif
+
+    mask = np.zeros(diff.shape, dtype=np.uint8)
+    mask[positive | negative] = 255
+
+    with tempfile.TemporaryDirectory(prefix="compdem_rgb_") as tmpdir:
+        tmp_path = Path(tmpdir) / "difference_rgb_tmp.tif"
+        profile = {
+            "driver": "GTiff",
+            "height": diff.shape[0],
+            "width": diff.shape[1],
+            "count": 3,
+            "dtype": "uint8",
+            "transform": transform,
+            "crs": crs,
+            "tiled": True,
+            "blockxsize": 512,
+            "blockysize": 512,
+            "compress": "JPEG",
+            "jpeg_quality": 95,
+            "photometric": "YCBCR",
+            "interleave": "pixel",
+        }
+        with rasterio.open(tmp_path, "w", **profile) as dst:
+            dst.write(rgb)
+            dst.colorinterp = (ColorInterp.red, ColorInterp.green, ColorInterp.blue)
+            dst.write_mask(mask)
+
+        rio_copy(
+            tmp_path,
+            path,
+            driver="COG",
+            COMPRESS="JPEG",
+            QUALITY=95,
+            BLOCKSIZE=512,
+            OVERVIEWS="AUTO",
+            OVERVIEW_COMPRESS="JPEG",
+            OVERVIEW_QUALITY=95,
+            OVERVIEW_RESAMPLING="NEAREST",
+            BIGTIFF="IF_SAFER",
+        )
 
 
 def iter_leaf_detections(item):
@@ -539,7 +602,7 @@ def box_depth_stats(box_item, diff, transform):
 
 def export_results(candidates, zones, final_boxes, diff, valid, transform, crs, cfg):
     paths, threshold_mm = output_paths(cfg), cfg["threshold_mm"]
-    common = {"algorithm": "V4.5 signed spatial stats on V4_GOLDEN geometry",
+    common = {"algorithm": "V4.5.3 OpenLayers-ready COG outputs on V4_GOLDEN geometry",
               "difference": "compare - reference", "threshold_mm": threshold_mm,
               "spatial_max_min_area_cm2": PROFILE["spatial_max_min_area_cm2"]}
 
@@ -595,7 +658,7 @@ def export_results(candidates, zones, final_boxes, diff, valid, transform, crs, 
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Détection V4.5 de changements entre deux DEM")
+    parser = argparse.ArgumentParser(description="Détection V4.5.3 de changements entre deux DEM")
     parser.add_argument("config", help="Fichier JSON de configuration")
     args = parser.parse_args()
     cfg = load_config(args.config)
