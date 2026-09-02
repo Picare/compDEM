@@ -2,7 +2,7 @@
 
 `compDEM` compare deux DEM photogrammétriques déjà alignés et détecte les changements significatifs de relief/profondeur.
 
-La version actuelle correspond au profil validé **V4.5 SIGNED STATS**. L'algorithme métier est volontairement calibré dans le code ; l'utilisateur ne règle que les entrées et le seuil vertical.
+La version actuelle correspond au profil validé **V4.5.3 OPENLAYERS COG**. L'algorithme métier est volontairement calibré dans le code ; l'utilisateur ne règle que les entrées et le seuil vertical.
 
 ## Principe
 
@@ -71,9 +71,7 @@ result_zones.geojson
 result_boxes.geojson
 result_summary.json
 result_difference.tif
-result_difference.tfw
 result_difference_rgba.tif
-result_difference_rgba.tfw
 ```
 
 ### `result_boxes.geojson`
@@ -93,17 +91,23 @@ Les propriétés `sign`, `signs` et `median_dz_mm` ne sont pas exportées dans l
 
 ### `result_difference.tif`
 
-GeoTIFF `float32` contenant la différence brute entre les deux DEM.
+COG (Cloud Optimized GeoTIFF) `float32` contenant la différence brute entre les deux DEM. Le géoréférencement est stocké directement dans le GeoTIFF ; aucun `.tfw` de sortie n'est nécessaire.
 
 ### `result_difference_rgba.tif`
 
-GeoTIFF RGBA destiné à la visualisation :
+Le nom historique est conservé, mais le fichier est désormais un **COG RGB + masque de transparence interne** optimisé pour l'affichage web :
 
+- blocs internes : `512 × 512` ;
+- RGB : JPEG qualité 95 ;
+- pyramides RGB : JPEG qualité 95 ;
+- masque de transparence et ses pyramides : masque interne 1 bit compressé DEFLATE ;
 - `|ΔZ| <= threshold_mm` : totalement transparent ;
 - `ΔZ > threshold_mm` : rouge vif ;
 - `ΔZ < -threshold_mm` : bleu vif.
 
-Le canal alpha est réel. Ce raster peut donc être tuilé en PNG transparent pour un affichage web, notamment avec OpenLayers.
+Le géoréférencement (résolution, origine et CRS) est contenu dans le GeoTIFF. Aucun `.tfw` externe n'est produit.
+
+Avec OpenLayers, le JPEG-in-TIFF est stocké en YCbCr par GDAL. Utiliser `convertToRGB: 'auto'` ou `convertToRGB: true` dans `ol/source/GeoTIFF`. Le masque interne est reconnu par OpenLayers comme bande alpha. Pour le CRS local de compDEM, il est recommandé de fournir explicitement une projection OpenLayers en mètres.
 
 ## Dépendances
 
@@ -113,4 +117,4 @@ Le canal alpha est réel. Ce raster peut donc être tuilé en PNG transparent po
 
 ## Version
 
-`4.5.2` — même géométrie V4_GOLDEN ; dimensions de box exportées à 3 décimales en mètres et profondeurs signées à 1 décimale en millimètres.
+`4.5.3` — mêmes détections V4_GOLDEN ; sorties raster en COG 512 × 512, JPEG 95 pour le RGB et les pyramides, masque interne pour la transparence, géoréférencement entièrement interne au GeoTIFF.
