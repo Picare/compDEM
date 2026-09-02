@@ -2,7 +2,7 @@
 
 `compDEM` compare deux DEM photogrammétriques déjà alignés et détecte les changements significatifs de relief/profondeur.
 
-La version actuelle correspond au profil validé **V4.4 SPATIAL STATS**. L'algorithme métier est volontairement calibré dans le code ; l'utilisateur ne règle que les entrées et le seuil vertical.
+La version actuelle correspond au profil validé **V4.5 SIGNED STATS**. L'algorithme métier est volontairement calibré dans le code ; l'utilisateur ne règle que les entrées et le seuil vertical.
 
 ## Principe
 
@@ -80,16 +80,16 @@ result_difference_rgba.tfw
 
 C'est la sortie principale pour les zones détectées. Chaque bounding box contient notamment :
 
-- le signe du changement ;
-- ses dimensions ;
+- `bbox_width_m` et `bbox_height_m` : dimensions de la box en mètres ;
 - le nombre de pixels réellement détectés ;
-- `median_depth_mm` : médiane de la profondeur absolue sur **tous les pixels réellement détectés** ;
-- `median_dz_mm` : médiane signée sur ces mêmes pixels ;
-- `spatial_max_depth_mm` : profondeur maximale confirmée spatialement.
+- `median_depth_mm` : médiane **signée** de `DEM_compare - DEM_reference` sur tous les pixels réellement détectés ;
+- `spatial_max_depth_mm` : profondeur maximale confirmée spatialement, elle aussi **signée**.
 
 Les statistiques sont calculées uniquement sur les pixels appartenant aux détections avérées, et non sur toute la surface rectangulaire de la box.
 
-Le maximum spatial est défini comme la plus grande profondeur pour laquelle il existe encore une composante de pixels détectés **8-connexes d'au moins 2 cm²**, positif et négatif étant traités séparément. Cette surface est convertie automatiquement en nombre de pixels à partir de la résolution du DEM (à 2 mm/pixel, 2 cm² correspondent à 50 pixels). Cette règle élimine les petits amas photogrammétriques aberrants sans utiliser de P99 ni de maximum brut.
+Le maximum spatial est défini comme la plus grande amplitude pour laquelle il existe encore une composante de pixels détectés **8-connexes d'au moins 2 cm²**, positif et négatif étant traités séparément. La valeur exportée conserve ensuite le signe du changement. Cette surface est convertie automatiquement en nombre de pixels à partir de la résolution du DEM (à 2 mm/pixel, 2 cm² correspondent à 50 pixels). Cette règle élimine les petits amas photogrammétriques aberrants sans utiliser de P99 ni de maximum brut.
+
+Les propriétés `sign`, `signs` et `median_dz_mm` ne sont pas exportées dans les boxes finales : le signe est directement porté par `median_depth_mm` et `spatial_max_depth_mm`.
 
 ### `result_difference.tif`
 
@@ -113,4 +113,4 @@ Le canal alpha est réel. Ce raster peut donc être tuilé en PNG transparent po
 
 ## Version
 
-`4.4.0` — même géométrie V4_GOLDEN, médianes sur tous les pixels détectés et maximum spatial confirmé sur 2 cm².
+`4.5.0` — même géométrie V4_GOLDEN, dimensions en mètres, médiane signée et maximum spatial signé confirmé sur 2 cm².
