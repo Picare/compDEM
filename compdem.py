@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""compDEM 4.5.6 — sorties métier inversées sur le moteur V4_GOLDEN 4.5.3.
+"""compDEM 4.5.7 — sorties métier inversées sur le moteur V4_GOLDEN 4.5.3.
 
 Le moteur de détection reste inchangé dans compdem_core.py.
 Sorties: reference - compare ; gain positif ; loss négatif.
+Couleurs visibles réellement inversées : gain rouge ; loss bleu.
 """
 from __future__ import annotations
 
@@ -15,7 +16,7 @@ from pathlib import Path
 import numpy as np
 import compdem_core as core
 
-__version__ = "4.5.6"
+__version__ = "4.5.7"
 
 
 def save_geojson(path: Path, features: list, crs, properties: dict):
@@ -80,9 +81,10 @@ def export_results(candidates, zones, final_boxes, diff, valid, transform, crs, 
     display_diff = -diff
 
     common = {
-        "algorithm": "V4.5.6 inverted display convention on V4_GOLDEN geometry",
+        "algorithm": "V4.5.7 inverted values and visibly inverted color scale on V4_GOLDEN geometry",
         "difference": "reference - compare",
         "change_convention": "gain = positive, loss = negative",
+        "color_convention": "gain = red, loss = blue",
         "threshold_mm": threshold_mm,
         "spatial_max_min_area_cm2": core.PROFILE["spatial_max_min_area_cm2"],
     }
@@ -163,10 +165,11 @@ def export_results(candidates, zones, final_boxes, diff, valid, transform, crs, 
     save_geojson(paths["zones"], zone_features, crs, common)
     save_geojson(paths["boxes"], box_features, crs, common)
 
-    # COG numérique : signe inversé. COG couleur : on garde l'image historique
-    # du moteur (ancien négatif=bleu), qui correspond désormais à gain positif=bleu.
+    # Les deux COG utilisent maintenant la convention affichée reference-compare.
+    # Le moteur historique colore positif=rouge et négatif=bleu : en lui passant
+    # display_diff, le gain positif devient réellement rouge et le loss négatif bleu.
     core.save_difference_tiff(paths["difference"], display_diff, transform, crs)
-    core.save_rgba_tiff(paths["rgba"], diff, valid, transform, crs, threshold_mm)
+    core.save_rgba_tiff(paths["rgba"], display_diff, valid, transform, crs, threshold_mm)
 
     finite = display_diff[np.isfinite(display_diff)]
     summary = {
@@ -188,7 +191,7 @@ def export_results(candidates, zones, final_boxes, diff, valid, transform, crs, 
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Détection V4.5.6 de changements entre deux DEM")
+    parser = argparse.ArgumentParser(description="Détection V4.5.7 de changements entre deux DEM")
     parser.add_argument("config", help="Fichier JSON de configuration")
     args = parser.parse_args()
 

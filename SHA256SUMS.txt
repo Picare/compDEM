@@ -1,5 +1,6 @@
-7faf23c282b06973fbd760887d7532e2134b4be20e85d77ace1c3e1bfa9aa9dc  compdem.py
+# SHA256SUMS
+# README.md is intentionally omitted because documentation can change without affecting execution.
+0df415e5e0466e1cff819a541e935de2e289641f7a6cc58fb5ead5df170158bc  compdem.py
 859a8b880699c4707d750eaed736fa1e0e842a6dcd7b1d5683346ec797af2379  config.example.json
-7bbe9147a50ef21f2309c1bb70366313d81a8c79299923cfd05f8f042b778209  README.md
 2efa5bbd89e6bd2b49c9d570990a81f7edb65a3ea296b207da62f8a419367a32  requirements.txt
 6c98df49c1f8624a51aa3593782507fc3140c57cb4feb3450e6dca74497dc3c1  .gitignore

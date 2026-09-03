@@ -2,7 +2,7 @@
 
 `compDEM` compare deux DEM photogrammétriques déjà alignés et détecte les changements significatifs de relief/profondeur.
 
-Version actuelle : **4.5.6**. La géométrie de détection reste celle du profil **V4_GOLDEN** validé.
+Version actuelle : **4.5.7**. La géométrie de détection reste celle du profil **V4_GOLDEN** validé.
 
 ## Convention métier des sorties
 
@@ -17,11 +17,11 @@ valeur < 0  -> change_type = "loss"
 
 Ainsi, une ancienne valeur de `-11 mm` devient `+11 mm` et est exportée comme `gain`.
 
-La couleur suit la même convention métier :
+La couleur est maintenant réellement inversée par rapport aux sorties historiques :
 
 ```text
-gain / valeur positive -> bleu
-loss / valeur négative -> rouge
+gain / valeur positive -> rouge
+loss / valeur négative -> bleu
 |écart| <= seuil       -> transparent
 ```
 
@@ -102,8 +102,8 @@ Le nom est historique ; le fichier est un **COG RGB + masque interne** :
 - pyramides RGB en JPEG qualité 95 ;
 - pyramides en `NEAREST` ;
 - masque de transparence interne GDAL ;
-- gain positif : bleu ;
-- loss négatif : rouge ;
+- gain positif : rouge ;
+- loss négatif : bleu ;
 - valeurs dans le seuil : transparentes.
 
 Avec OpenLayers, utiliser `convertToRGB: 'auto'` ou `convertToRGB: true` pour le JPEG YCbCr. Le masque interne est utilisé comme transparence.
@@ -116,4 +116,4 @@ Avec OpenLayers, utiliser `convertToRGB: 'auto'` ou `convertToRGB: true` pour le
 
 ## Version
 
-**4.5.6** — inversion de la convention affichée : gain positif, loss négatif, ajout de `change_type`, inversion cohérente du raster de différence et de l'échelle colorée. Les pyramides COG restent en `NEAREST`.
+**4.5.7** — gain positif et loss négatif, ajout de `change_type`, et inversion réelle des couleurs visibles : gain rouge, loss bleu. Les pyramides COG restent en `NEAREST`.
