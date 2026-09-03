@@ -2,21 +2,28 @@
 
 `compDEM` compare deux DEM photogrammétriques déjà alignés et détecte les changements significatifs de relief/profondeur.
 
-La version actuelle correspond au profil validé **V4.5.3 OPENLAYERS COG**. L'algorithme métier est volontairement calibré dans le code ; l'utilisateur ne règle que les entrées et le seuil vertical.
+Version actuelle : **4.5.6**. La géométrie de détection reste celle du profil **V4_GOLDEN** validé.
 
-## Principe
+## Convention métier des sorties
 
-Le programme :
+Le moteur de détection conserve sa logique interne historique afin de ne pas modifier les détections. En revanche, les valeurs exportées suivent désormais la convention :
 
-1. ouvre les deux DEM GeoTIFF ;
-2. travaille uniquement sur l'intersection de leurs emprises géoréférencées ;
-3. calcule `DEM_compare - DEM_reference` sans rééchantillonnage ;
-4. détecte les zones compactes/irrégulières par densité spatiale ;
-5. détecte les lignes fortes et fragmentées par analyse de direction (PCA) ;
-6. regroupe les zones proches et fusionne les bounding boxes qui se chevauchent ;
-7. exporte les résultats vectoriels et raster.
+```text
+valeur affichée = DEM_reference - DEM_compare
 
-Les deux DEM peuvent différer de quelques lignes ou colonnes : l'analyse se fait sur leur intersection dans le repère monde.
+valeur > 0  -> change_type = "gain"
+valeur < 0  -> change_type = "loss"
+```
+
+Ainsi, une ancienne valeur de `-11 mm` devient `+11 mm` et est exportée comme `gain`.
+
+La couleur suit la même convention métier :
+
+```text
+gain / valeur positive -> bleu
+loss / valeur négative -> rouge
+|écart| <= seuil       -> transparent
+```
 
 ## Installation
 
@@ -28,26 +35,21 @@ pip install -r requirements.txt
 
 ## Configuration
 
-Copier `config.example.json` en `config.json` puis renseigner les deux DEM :
+Exemple :
 
 ```json
 {
-  "reference_dem": "DEM_reference.tif",
-  "compare_dem": "DEM_compare.tif",
+  "reference_dem": "DEMInsp2.tif",
+  "compare_dem": "DEMReinsp2-1.tif",
   "threshold_mm": 10.0,
-  "output_prefix": "result"
+  "output_prefix": "result",
+  "output_dir": "./outputs"
 }
 ```
 
-Les fichiers `.tfw`, s'ils sont utilisés, doivent être placés à côté des TIFF avec le même nom de base. Rasterio/GDAL les lit automatiquement.
+Les deux DEM doivent avoir la même résolution et être alignés sur une grille compatible. Ils peuvent différer de quelques lignes ou colonnes : le programme travaille sur leur intersection géoréférencée, sans reprojection ni interpolation.
 
-`threshold_mm` est le seuil vertical : avec `10.0`, les variations comprises entre -10 mm et +10 mm ne sont pas considérées comme du signal utile.
-
-Un champ optionnel `output_dir` peut être ajouté pour choisir le dossier de sortie :
-
-```json
-"output_dir": "./outputs"
-```
+Les fichiers `.tfw` d'entrée peuvent être placés à côté des TIFF si nécessaire ; Rasterio/GDAL les lit automatiquement. Aucun `.tfw` de sortie n'est produit.
 
 ## Lancement
 
@@ -55,15 +57,7 @@ Un champ optionnel `output_dir` peut être ajouté pour choisir le dossier de so
 python compdem.py config.json
 ```
 
-La différence calculée est toujours :
-
-```text
-DEM_compare - DEM_reference
-```
-
 ## Fichiers produits
-
-Pour `"output_prefix": "result"` :
 
 ```text
 result_detections.geojson
@@ -76,45 +70,50 @@ result_difference_rgba.tif
 
 ### `result_boxes.geojson`
 
-C'est la sortie principale pour les zones détectées. Chaque bounding box contient notamment :
+Chaque box finale contient notamment :
 
-- `bbox_width_m` et `bbox_height_m` : dimensions de la box en mètres ;
-- le nombre de pixels réellement détectés ;
-- `median_depth_mm` : médiane **signée** de `DEM_compare - DEM_reference` sur tous les pixels réellement détectés ;
-- `spatial_max_depth_mm` : profondeur maximale confirmée spatialement, elle aussi **signée**.
+- `change_type` : `gain` ou `loss` ;
+- `bbox_width_m` et `bbox_height_m` : dimensions de la box en mètres, à 0,001 m ;
+- `center_y_m` : position monde Y du centre de la box, à 0,001 m ;
+- `center_angle_deg` : position X du centre convertie linéairement sur 0° à 360° entre le bord gauche et le bord droit de l'emprise commune, à 0,1° ;
+- `detected_pixel_count` : nombre de pixels réellement détectés ;
+- `detected_area_m2` : surface de l'union des pixels réellement détectés ayant conduit à la box, et non surface du rectangle ;
+- `median_depth_mm` : médiane signée des pixels détectés selon la convention `gain positif / loss négatif` ;
+- `spatial_max_depth_mm` : maximum spatial signé selon la même convention.
 
-Les statistiques sont calculées uniquement sur les pixels appartenant aux détections avérées, et non sur toute la surface rectangulaire de la box.
-
-Le maximum spatial est défini comme la plus grande amplitude pour laquelle il existe encore une composante de pixels détectés **8-connexes d'au moins 2 cm²**, positif et négatif étant traités séparément. La valeur exportée conserve ensuite le signe du changement. Cette surface est convertie automatiquement en nombre de pixels à partir de la résolution du DEM (à 2 mm/pixel, 2 cm² correspondent à 50 pixels). Cette règle élimine les petits amas photogrammétriques aberrants sans utiliser de P99 ni de maximum brut.
-
-Les propriétés `sign`, `signs` et `median_dz_mm` ne sont pas exportées dans les boxes finales : le signe est directement porté par `median_depth_mm` et `spatial_max_depth_mm`.
+Le maximum spatial est la plus forte amplitude encore supportée par une composante 8-connexe d'au moins **2 cm²**. Les signes opposés sont traités séparément.
 
 ### `result_difference.tif`
 
-COG (Cloud Optimized GeoTIFF) `float32` contenant la différence brute entre les deux DEM. Le géoréférencement est stocké directement dans le GeoTIFF ; aucun `.tfw` de sortie n'est nécessaire.
+COG `float32` contenant la différence affichée :
+
+```text
+DEM_reference - DEM_compare
+```
+
+Paramètres principaux : blocs 512×512, compression DEFLATE, pyramides internes `NEAREST`, géoréférencement interne.
 
 ### `result_difference_rgba.tif`
 
-Le nom historique est conservé, mais le fichier est désormais un **COG RGB + masque de transparence interne** optimisé pour l'affichage web :
+Le nom est historique ; le fichier est un **COG RGB + masque interne** :
 
-- blocs internes : `512 × 512` ;
-- RGB : JPEG qualité 95 ;
-- pyramides RGB : JPEG qualité 95 ;
-- masque de transparence et ses pyramides : masque interne 1 bit compressé DEFLATE ;
-- `|ΔZ| <= threshold_mm` : totalement transparent ;
-- `ΔZ > threshold_mm` : rouge vif ;
-- `ΔZ < -threshold_mm` : bleu vif.
+- blocs 512×512 ;
+- RGB en JPEG qualité 95 / YCbCr ;
+- pyramides RGB en JPEG qualité 95 ;
+- pyramides en `NEAREST` ;
+- masque de transparence interne GDAL ;
+- gain positif : bleu ;
+- loss négatif : rouge ;
+- valeurs dans le seuil : transparentes.
 
-Le géoréférencement (résolution, origine et CRS) est contenu dans le GeoTIFF. Aucun `.tfw` externe n'est produit.
-
-Avec OpenLayers, le JPEG-in-TIFF est stocké en YCbCr par GDAL. Utiliser `convertToRGB: 'auto'` ou `convertToRGB: true` dans `ol/source/GeoTIFF`. Le masque interne est reconnu par OpenLayers comme bande alpha. Pour le CRS local de compDEM, il est recommandé de fournir explicitement une projection OpenLayers en mètres.
+Avec OpenLayers, utiliser `convertToRGB: 'auto'` ou `convertToRGB: true` pour le JPEG YCbCr. Le masque interne est utilisé comme transparence.
 
 ## Dépendances
 
-- NumPy : calcul matriciel ;
-- Rasterio/GDAL : lecture/écriture et géoréférencement des rasters ;
-- OpenCV : morphologie, densité spatiale et composantes connexes.
+- NumPy ;
+- Rasterio/GDAL ;
+- OpenCV.
 
 ## Version
 
-`4.5.3` — mêmes détections V4_GOLDEN ; sorties raster en COG 512 × 512, JPEG 95 pour le RGB et les pyramides, masque interne pour la transparence, géoréférencement entièrement interne au GeoTIFF.
+**4.5.6** — inversion de la convention affichée : gain positif, loss négatif, ajout de `change_type`, inversion cohérente du raster de différence et de l'échelle colorée. Les pyramides COG restent en `NEAREST`.
